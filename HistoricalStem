@@ -1,0 +1,760 @@
+-- ============================================================
+-- Assessment 2: Historical STEM Figures Database
+-- 3rd Normal Form (3NF) Normalised Database
+-- Compatible with MySQL / MariaDB
+-- ============================================================
+
+-- ============================================================
+-- SECTION 1: DROP TABLES (clean slate)
+-- Dropped in reverse dependency order to avoid FK violations
+-- ============================================================
+DROP TABLE IF EXISTS Event_HistoricalFigure;
+DROP TABLE IF EXISTS Event_Speaker;
+DROP TABLE IF EXISTS Event_Room;
+DROP TABLE IF EXISTS Ticket;
+DROP TABLE IF EXISTS Event;
+DROP TABLE IF EXISTS Room;
+DROP TABLE IF EXISTS Speaker;
+DROP TABLE IF EXISTS Scientist_Field;
+DROP TABLE IF EXISTS Scientist_Organisation;
+DROP TABLE IF EXISTS Scientist;
+DROP TABLE IF EXISTS Field;
+DROP TABLE IF EXISTS Organisation;
+DROP TABLE IF EXISTS Country;
+
+
+-- ============================================================
+-- SECTION 2: CREATE LOOKUP / REFERENCE TABLES
+-- These hold atomic values; referenced by foreign key only.
+-- Moving country, field and organisation into their own tables
+-- removes repeating groups and transitive dependencies (3NF).
+-- ============================================================
+
+-- Country: each country stored once and referenced by ID
+CREATE TABLE Country (
+    country_id   INT          AUTO_INCREMENT PRIMARY KEY,
+    country_name VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- Field of study: normalised out of Scientist to remove the
+-- comma-separated repeating group (e.g. "Mathematics, Computing")
+CREATE TABLE Field (
+    field_id   INT          AUTO_INCREMENT PRIMARY KEY,
+    field_name VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- Organisation: employers / institutions stored separately
+-- prevents transitive dependency in the Scientist table
+CREATE TABLE Organisation (
+    org_id   INT          AUTO_INCREMENT PRIMARY KEY,
+    org_name VARCHAR(200) NOT NULL UNIQUE
+);
+
+
+-- ============================================================
+-- SECTION 3: SCIENTIST TABLE (core biographical data)
+-- All non-key attributes depend solely on scientist_id (3NF).
+-- death_year is NULL for scientists who are still alive.
+-- ============================================================
+CREATE TABLE Scientist (
+    scientist_id INT          AUTO_INCREMENT PRIMARY KEY,
+    full_name    VARCHAR(200) NOT NULL,
+    birth_year   INT,
+    death_year   INT,
+    country_id   INT          NOT NULL,
+    biography    TEXT,
+    CONSTRAINT fk_scientist_country FOREIGN KEY (country_id)
+        REFERENCES Country(country_id)
+);
+
+
+-- ============================================================
+-- SECTION 4: JUNCTION TABLES (many-to-many relationships)
+-- A junction table is required wherever a many-to-many
+-- relationship exists, to achieve 3NF.
+-- ============================================================
+
+-- Scientist <-> Field (a scientist can cover many fields; a field
+-- can have many scientists)
+CREATE TABLE Scientist_Field (
+    scientist_id INT NOT NULL,
+    field_id     INT NOT NULL,
+    PRIMARY KEY (scientist_id, field_id),
+    CONSTRAINT fk_sf_scientist FOREIGN KEY (scientist_id)
+        REFERENCES Scientist(scientist_id),
+    CONSTRAINT fk_sf_field FOREIGN KEY (field_id)
+        REFERENCES Field(field_id)
+);
+
+-- Scientist <-> Organisation (a scientist can work for many orgs;
+-- an org can employ many scientists)
+CREATE TABLE Scientist_Organisation (
+    scientist_id INT NOT NULL,
+    org_id       INT NOT NULL,
+    PRIMARY KEY (scientist_id, org_id),
+    CONSTRAINT fk_so_scientist FOREIGN KEY (scientist_id)
+        REFERENCES Scientist(scientist_id),
+    CONSTRAINT fk_so_org FOREIGN KEY (org_id)
+        REFERENCES Organisation(org_id)
+);
+
+
+-- ============================================================
+-- SECTION 5: EVENTS / BOOKING SYSTEM
+-- Requirements: events have at least 1 speaker, 1 or more
+-- historical figures as topics, and 1 or more rooms.
+-- Ticket information is separated to avoid NULLs on free events.
+-- ============================================================
+
+-- Speaker: people who deliver talks at events
+CREATE TABLE Speaker (
+    speaker_id  INT          AUTO_INCREMENT PRIMARY KEY,
+    first_name  VARCHAR(100) NOT NULL,
+    last_name   VARCHAR(100) NOT NULL,
+    email       VARCHAR(200),
+    affiliation VARCHAR(200)
+);
+
+-- Room: venues for events. Two types as per brief.
+CREATE TABLE Room (
+    room_id    INT          AUTO_INCREMENT PRIMARY KEY,
+    room_name  VARCHAR(100) NOT NULL,
+    room_type  ENUM('Lecture', 'Event') NOT NULL,
+    capacity   INT          NOT NULL,
+    location   VARCHAR(200)
+);
+
+-- Event: core event record
+CREATE TABLE Event (
+    event_id        INT           AUTO_INCREMENT PRIMARY KEY,
+    event_title     VARCHAR(300)  NOT NULL,
+    event_date      DATE          NOT NULL,
+    start_time      TIME,
+    end_time        TIME,
+    description     TEXT,
+    requires_ticket BOOLEAN       NOT NULL DEFAULT FALSE
+);
+
+-- Ticket: stored separately so free events have no orphan NULLs
+CREATE TABLE Ticket (
+    ticket_id   INT           AUTO_INCREMENT PRIMARY KEY,
+    event_id    INT           NOT NULL UNIQUE,
+    price       DECIMAL(6,2)  NOT NULL,
+    total_seats INT           NOT NULL,
+    CONSTRAINT fk_ticket_event FOREIGN KEY (event_id)
+        REFERENCES Event(event_id)
+);
+
+-- Event <-> Room (an event needs at least 1 room; a room can
+-- host many events)
+CREATE TABLE Event_Room (
+    event_id INT NOT NULL,
+    room_id  INT NOT NULL,
+    PRIMARY KEY (event_id, room_id),
+    CONSTRAINT fk_er_event FOREIGN KEY (event_id)
+        REFERENCES Event(event_id),
+    CONSTRAINT fk_er_room  FOREIGN KEY (room_id)
+        REFERENCES Room(room_id)
+);
+
+-- Event <-> Speaker (at least 1 speaker per event)
+CREATE TABLE Event_Speaker (
+    event_id   INT          NOT NULL,
+    speaker_id INT          NOT NULL,
+    role       VARCHAR(100) DEFAULT 'Speaker',
+    PRIMARY KEY (event_id, speaker_id),
+    CONSTRAINT fk_es_event   FOREIGN KEY (event_id)
+        REFERENCES Event(event_id),
+    CONSTRAINT fk_es_speaker FOREIGN KEY (speaker_id)
+        REFERENCES Speaker(speaker_id)
+);
+
+-- Event <-> HistoricalFigure (1 or more topics per event)
+CREATE TABLE Event_HistoricalFigure (
+    event_id     INT NOT NULL,
+    scientist_id INT NOT NULL,
+    PRIMARY KEY (event_id, scientist_id),
+    CONSTRAINT fk_ehf_event     FOREIGN KEY (event_id)
+        REFERENCES Event(event_id),
+    CONSTRAINT fk_ehf_scientist FOREIGN KEY (scientist_id)
+        REFERENCES Scientist(scientist_id)
+);
+
+
+-- ============================================================
+-- SECTION 6: INSERT REFERENCE DATA
+-- ============================================================
+
+INSERT INTO Country (country_name) VALUES
+    ('Britain'), ('Egypt'), ('France'), ('Germany'), ('Iran'),
+    ('Italy'), ('Japan'), ('Poland'), ('Russia'), ('Serbia'),
+    ('Sweden'), ('USA');
+
+INSERT INTO Field (field_name) VALUES
+    ('Mathematics'), ('Computing'), ('Biology'), ('Physics'),
+    ('Chemistry'), ('Engineering'), ('Astronomy'), ('Medicine');
+
+INSERT INTO Organisation (org_name) VALUES
+    ('NASA'),
+    ('National Advisory Committee for Aeronautics (NACA)'),
+    ('Manhattan Project'),
+    ('DuPont'),
+    ('Harvard University'),
+    ('Yale University'),
+    ('Cambridge University'),
+    ('Zurich Polytechnic'),
+    ('University of Göttingen'),
+    ('Russian Chemical Society'),
+    ('Physics Society of Japan');
+
+
+-- ============================================================
+-- SECTION 7: INSERT SCIENTISTS
+-- ============================================================
+
+-- Britain
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Augusta Ada King (Lovelace)', 1815, 1852,
+    (SELECT country_id FROM Country WHERE country_name='Britain'),
+    'British mathematician accredited with the first published computer algorithm. She suggested computers could do more than simple calculations, perhaps even write music.'),
+('Mary Cartwright', 1900, 1998,
+    (SELECT country_id FROM Country WHERE country_name='Britain'),
+    'In 1936 became director of studies in Mathematics at Girton College, Cambridge. Her work with Littlewood on differential equations contributed to Chaos Theory. First woman to serve on the Council of the Royal Society.'),
+('Rosalind Franklin', 1920, 1958,
+    (SELECT country_id FROM Country WHERE country_name='Britain'),
+    'Graduated from Cambridge in Natural Sciences. Pioneered X-ray crystallography, identifying two types of DNA and noting the helix-like structure of one in 1951, two years before Watson and Crick.'),
+('Hertha Ayrton', 1854, 1923,
+    (SELECT country_id FROM Country WHERE country_name='Britain'),
+    'In 1899 became the first woman to present her own paper to the Institution of Electrical Engineers. Passed the Mathematical Tripos at Cambridge but was denied a degree as a woman.'),
+('Dorothy Hodgkin', 1910, 1994,
+    (SELECT country_id FROM Country WHERE country_name='Britain'),
+    'Third woman to win a Nobel Prize in Chemistry, for determining the structures of penicillin, Vitamin B12 and Insulin by X-ray crystallography. Fellow of the Royal Society.');
+
+-- Egypt
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Hypatia Alexandria', 360, 415,
+    (SELECT country_id FROM Country WHERE country_name='Egypt'),
+    'Earliest well-documented female mathematician. Regarded as the leading mathematician and astronomer in the known world during her lifetime. Taught leading philosophers in the Greek Empire.');
+
+-- France
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Émilie du Châtelet', 1706, 1749,
+    (SELECT country_id FROM Country WHERE country_name='France'),
+    'Key figure in the French Enlightenment. Translated Newton''s Principia into French (still the standard translation). Established the basis for Kinetic Energy and predicted infrared radiation.'),
+('Marie-Sophie Germain', 1776, 1831,
+    (SELECT country_id FROM Country WHERE country_name='France'),
+    'Made significant contributions to number theory, Fermat''s last theorem and elasticity theory. Corresponded with Legendre and Gauss under a male pseudonym due to societal barriers.'),
+('Irène Joliot-Curie', 1897, 1956,
+    (SELECT country_id FROM Country WHERE country_name='France'),
+    'Daughter of Marie Curie. Won the Nobel Prize in Chemistry for the discovery of artificial radioactivity. Identified the positron and neutron, and worked on France''s first nuclear reactor.'),
+('Yvonne Choquet-Bruhat', 1923, NULL,
+    (SELECT country_id FROM Country WHERE country_name='France'),
+    'Worked with Albert Einstein and proved the local existence and uniqueness of the vacuum Einstein equations, founding dynamics in General Relativity. Pioneered work on supergravity.');
+
+-- Germany
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Emmy Noether', 1882, 1935,
+    (SELECT country_id FROM Country WHERE country_name='Germany'),
+    'Described by Albert Einstein as "the most significant creative mathematical genius thus far produced". Her work showing conservation laws derive from symmetry solved a problem in Einstein''s relativity. Created the theoretical groundwork for the Standard Model.'),
+('Ida Noddack', 1896, 1978,
+    (SELECT country_id FROM Country WHERE country_name='Germany'),
+    'Nominated three times for a Nobel Prize in Chemistry for the discovery of rhenium. Her 1934 hypothesis stating elements could break into non-neighbouring elements was later proven correct, leading to the discovery of nuclear fission.'),
+('Maria Goeppert Mayer', 1906, 1972,
+    (SELECT country_id FROM Country WHERE country_name='Germany'),
+    'German theoretical physicist who worked on the Manhattan Project with Edward Teller. Awarded a Nobel Prize in Physics for her model of the structure of nuclear shells.');
+
+-- Italy
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Maria Gaetana Agnesi', 1718, 1799,
+    (SELECT country_id FROM Country WHERE country_name='Italy'),
+    'First woman to publish an original mathematics book in her own name, and the first woman appointed as a mathematics professor at a university (1750, by Pope Benedict XIV).');
+
+-- Japan
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Fumiko Yonezawa', 1938, 2019,
+    (SELECT country_id FROM Country WHERE country_name='Japan'),
+    'Created computer visualisation of amorphous structures of semiconductors and liquid metals. In 1996 became the first female President of the Physics Society of Japan. Awarded a L''Oréal-UNESCO Award for Women in Science.');
+
+-- Poland
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Marie Skłodowska Curie', 1867, 1934,
+    (SELECT country_id FROM Country WHERE country_name='Poland'),
+    'First woman to win a Nobel Prize (1903) and one of only four people to win two Nobel Prizes. Discovered Radium and Polonium and pioneered radiotherapy for cancer. Born in Poland, moved to Paris for her degree.');
+
+-- Russia
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Julia Lermontova', 1846, 1919,
+    (SELECT country_id FROM Country WHERE country_name='Russia'),
+    'First Russian female doctor in chemistry and third woman to receive a European doctorate. Developed a device for continuous distillation of petroleum. Inducted to the Russian Chemical Society in 1875.'),
+('Sofya Kovalevskaya', 1850, 1891,
+    (SELECT country_id FROM Country WHERE country_name='Russia'),
+    'First woman to gain a modern Doctorate. Proved the Cauchy–Kovalevskaya theorem for analytic partial differential equations. In 1889 became the first woman appointed as a full Professor.');
+
+-- Serbia
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Mileva Marić', 1875, 1948,
+    (SELECT country_id FROM Country WHERE country_name='Serbia'),
+    'Serbian physicist and mathematician; first wife of Albert Einstein. Attended Zurich Polytechnic alongside Einstein but was denied her diploma. Subject of ongoing academic debate regarding her contribution to Einstein''s 1905 miracle year.');
+
+-- Sweden
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Sophia Brahe', 1559, 1643,
+    (SELECT country_id FROM Country WHERE country_name='Sweden'),
+    'Danish noblewoman who assisted her brother Tycho Brahe with astronomical observations that form the basis of modern planetary orbit predictions. Observed Tycho''s Supernova (SN 1572). Data passed on to Johannes Kepler, laying the groundwork for Isaac Newton.'),
+('Maria Christina Bruhn', 1732, 1808,
+    (SELECT country_id FROM Country WHERE country_name='Sweden'),
+    'Invented moisture- and fire-proof artillery shell canisters for the Swedish Army. Her work was initially claimed by Major Wagenfelt; supported by the King''s Council she was later awarded the prize in 1786.');
+
+-- USA
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Grace Hopper', 1906, 1992,
+    (SELECT country_id FROM Country WHERE country_name='USA'),
+    'American computer scientist and US Navy rear admiral. One of the first programmers of the Harvard Mark I. Invented one of the first linkers and popularised machine-independent programming languages, influencing COBOL. Holds 40 honorary degrees.'),
+('Stephanie Kwolek', 1923, 2014,
+    (SELECT country_id FROM Country WHERE country_name='USA'),
+    'Worked for DuPont 1946–1986 where she discovered Kevlar (poly-paraphenylene terephthalamide). First woman to win the Lavoisier Medal.'),
+('Katherine Johnson', 1918, 2020,
+    (SELECT country_id FROM Country WHERE country_name='USA'),
+    'NASA mathematician whose orbital mechanics calculations were critical to the first and subsequent US crewed spaceflights, including Mercury and Apollo. Worked for NASA/NACA 1953–1986.'),
+('Mary Jackson', 1921, 1944,  -- NOTE: death year incorrect in source data; corrected by Query 4
+    (SELECT country_id FROM Country WHERE country_name='USA'),
+    'American mathematician and aerospace engineer at NASA/NACA. Named author on 12 technical papers for NACA and NASA for her work on aerodynamics at supersonic speeds.');
+
+-- Iran
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography) VALUES
+('Maryam Mirzakhani', 1977, 2017,
+    (SELECT country_id FROM Country WHERE country_name='Iran'),
+    'In 2014 became the first woman and first Iranian to win the Fields Medal, for her work on the dynamics and geometry of Riemann surfaces and their moduli spaces. Also the first Iranian woman to win a gold medal at the International Mathematical Olympiad.');
+
+
+-- ============================================================
+-- SECTION 8: INSERT SCIENTIST-FIELD MAPPINGS
+-- ============================================================
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Augusta Ada King (Lovelace)' AND f.field_name IN ('Mathematics','Computing');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Mary Cartwright' AND f.field_name='Mathematics';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Rosalind Franklin' AND f.field_name IN ('Biology','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Hertha Ayrton' AND f.field_name IN ('Engineering','Mathematics','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Dorothy Hodgkin' AND f.field_name IN ('Biology','Chemistry');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Hypatia Alexandria' AND f.field_name IN ('Mathematics','Astronomy');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Émilie du Châtelet' AND f.field_name IN ('Mathematics','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Marie-Sophie Germain' AND f.field_name IN ('Mathematics','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Irène Joliot-Curie' AND f.field_name IN ('Chemistry','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Yvonne Choquet-Bruhat' AND f.field_name IN ('Mathematics','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Emmy Noether' AND f.field_name IN ('Mathematics','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Ida Noddack' AND f.field_name IN ('Chemistry','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Maria Goeppert Mayer' AND f.field_name='Physics';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Maria Gaetana Agnesi' AND f.field_name='Mathematics';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Fumiko Yonezawa' AND f.field_name IN ('Physics','Computing');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Marie Skłodowska Curie' AND f.field_name IN ('Physics','Chemistry');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Julia Lermontova' AND f.field_name='Chemistry';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Sofya Kovalevskaya' AND f.field_name='Mathematics';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Mileva Marić' AND f.field_name IN ('Mathematics','Physics');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Sophia Brahe' AND f.field_name IN ('Astronomy','Chemistry','Medicine');
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Maria Christina Bruhn' AND f.field_name='Chemistry';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Grace Hopper' AND f.field_name='Computing';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Stephanie Kwolek' AND f.field_name='Chemistry';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Katherine Johnson' AND f.field_name='Mathematics';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Mary Jackson' AND f.field_name='Mathematics';
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id FROM Scientist s JOIN Field f
+WHERE s.full_name='Maryam Mirzakhani' AND f.field_name='Mathematics';
+
+
+-- ============================================================
+-- SECTION 9: INSERT SCIENTIST-ORGANISATION MAPPINGS
+-- ============================================================
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Katherine Johnson' AND o.org_name='NASA';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Katherine Johnson' AND o.org_name='National Advisory Committee for Aeronautics (NACA)';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Mary Jackson' AND o.org_name='NASA';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Mary Jackson' AND o.org_name='National Advisory Committee for Aeronautics (NACA)';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Maria Goeppert Mayer' AND o.org_name='Manhattan Project';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Stephanie Kwolek' AND o.org_name='DuPont';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Grace Hopper' AND o.org_name='Harvard University';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Mileva Marić' AND o.org_name='Zurich Polytechnic';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Yvonne Choquet-Bruhat' AND o.org_name='Zurich Polytechnic';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Julia Lermontova' AND o.org_name='Russian Chemical Society';
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id FROM Scientist s JOIN Organisation o
+WHERE s.full_name='Fumiko Yonezawa' AND o.org_name='Physics Society of Japan';
+
+
+-- ============================================================
+-- SECTION 10: INSERT EVENTS DATA
+-- ============================================================
+
+-- Speakers
+INSERT INTO Speaker (first_name, last_name, email, affiliation) VALUES
+    ('Dr. Sarah',    'Mitchell', 'smitchell@sciencemuseum.org', 'Science Museum London'),
+    ('Prof. James',  'Carter',   'j.carter@ucl.ac.uk',         'University College London'),
+    ('Dr. Aisha',    'Okonkwo',  'a.okonkwo@imperial.ac.uk',   'Imperial College London');
+
+-- Rooms (both types as required by the brief)
+INSERT INTO Room (room_name, room_type, capacity, location) VALUES
+    ('Lecture Hall A',  'Lecture', 200, 'Science Museum, Exhibition Road, London'),
+    ('Seminar Room 3',  'Lecture',  50, 'UCL, Gower Street, London'),
+    ('Main Auditorium', 'Event',   500, 'Royal Institution, Albemarle Street, London'),
+    ('Gallery Room',    'Event',   100, 'Natural History Museum, Cromwell Road, London');
+
+-- Events
+INSERT INTO Event (event_title, event_date, start_time, end_time, description, requires_ticket) VALUES
+    ('Pioneers of Computing: Ada Lovelace & Grace Hopper',
+     '2026-05-15', '18:00:00', '20:00:00',
+     'An evening lecture exploring the foundational contributions of Ada Lovelace and Grace Hopper to modern computing.',
+     TRUE),
+    ('Women Who Changed Science: A Panel Discussion',
+     '2026-06-10', '14:00:00', '17:00:00',
+     'A panel discussion covering the contributions of Marie Curie, Rosalind Franklin, and Dorothy Hodgkin.',
+     FALSE),
+    ('Mathematics and the Universe: Emmy Noether and Mileva Marić',
+     '2026-07-22', '19:00:00', '21:00:00',
+     'A lecture exploring the mathematical contributions of Emmy Noether and the contested contributions of Mileva Marić to Einstein''s work.',
+     TRUE);
+
+-- Tickets (only for paid events; free events have no Ticket row)
+INSERT INTO Ticket (event_id, price, total_seats)
+SELECT event_id, 12.50, 200 FROM Event WHERE event_title LIKE 'Pioneers of Computing%';
+
+INSERT INTO Ticket (event_id, price, total_seats)
+SELECT event_id, 15.00, 300 FROM Event WHERE event_title LIKE 'Mathematics and the Universe%';
+
+-- Event-Room assignments
+INSERT INTO Event_Room (event_id, room_id)
+SELECT e.event_id, r.room_id FROM Event e JOIN Room r
+WHERE e.event_title LIKE 'Pioneers of Computing%' AND r.room_name='Lecture Hall A';
+
+INSERT INTO Event_Room (event_id, room_id)
+SELECT e.event_id, r.room_id FROM Event e JOIN Room r
+WHERE e.event_title LIKE 'Women Who Changed Science%' AND r.room_name='Main Auditorium';
+
+INSERT INTO Event_Room (event_id, room_id)
+SELECT e.event_id, r.room_id FROM Event e JOIN Room r
+WHERE e.event_title LIKE 'Mathematics and the Universe%' AND r.room_name='Seminar Room 3';
+
+-- Event-Speaker assignments
+INSERT INTO Event_Speaker (event_id, speaker_id, role)
+SELECT e.event_id, s.speaker_id, 'Keynote' FROM Event e JOIN Speaker s
+WHERE e.event_title LIKE 'Pioneers of Computing%' AND s.last_name='Mitchell';
+
+INSERT INTO Event_Speaker (event_id, speaker_id, role)
+SELECT e.event_id, s.speaker_id, 'Speaker' FROM Event e JOIN Speaker s
+WHERE e.event_title LIKE 'Women Who Changed Science%' AND s.last_name='Carter';
+
+INSERT INTO Event_Speaker (event_id, speaker_id, role)
+SELECT e.event_id, s.speaker_id, 'Panel' FROM Event e JOIN Speaker s
+WHERE e.event_title LIKE 'Women Who Changed Science%' AND s.last_name='Okonkwo';
+
+INSERT INTO Event_Speaker (event_id, speaker_id, role)
+SELECT e.event_id, s.speaker_id, 'Keynote' FROM Event e JOIN Speaker s
+WHERE e.event_title LIKE 'Mathematics and the Universe%' AND s.last_name='Carter';
+
+-- Event-HistoricalFigure assignments
+INSERT INTO Event_HistoricalFigure (event_id, scientist_id)
+SELECT e.event_id, s.scientist_id FROM Event e JOIN Scientist s
+WHERE e.event_title LIKE 'Pioneers of Computing%'
+  AND s.full_name IN ('Augusta Ada King (Lovelace)', 'Grace Hopper');
+
+INSERT INTO Event_HistoricalFigure (event_id, scientist_id)
+SELECT e.event_id, s.scientist_id FROM Event e JOIN Scientist s
+WHERE e.event_title LIKE 'Women Who Changed Science%'
+  AND s.full_name IN ('Marie Skłodowska Curie', 'Rosalind Franklin', 'Dorothy Hodgkin');
+
+INSERT INTO Event_HistoricalFigure (event_id, scientist_id)
+SELECT e.event_id, s.scientist_id FROM Event e JOIN Scientist s
+WHERE e.event_title LIKE 'Mathematics and the Universe%'
+  AND s.full_name IN ('Emmy Noether', 'Mileva Marić');
+
+
+-- ============================================================
+-- SECTION 11: SQL QUERIES (Assessment Questions 1-13)
+-- ============================================================
+
+-- ────────────────────────────────────────────────────────────
+-- Query 1: List all historical figures born in France
+-- ────────────────────────────────────────────────────────────
+SELECT s.full_name, s.birth_year, s.death_year
+FROM Scientist s
+JOIN Country c ON s.country_id = c.country_id
+WHERE c.country_name = 'France'
+ORDER BY s.birth_year;
+-- Results: Émilie du Châtelet, Marie-Sophie Germain,
+--          Irène Joliot-Curie, Yvonne Choquet-Bruhat
+
+-- ────────────────────────────────────────────────────────────
+-- Query 2: List all historical figures that contributed to Computing
+-- ────────────────────────────────────────────────────────────
+SELECT s.full_name, s.birth_year, s.death_year
+FROM Scientist s
+JOIN Scientist_Field sf ON s.scientist_id = sf.scientist_id
+JOIN Field f ON sf.field_id = f.field_id
+WHERE f.field_name = 'Computing'
+ORDER BY s.full_name;
+-- Results: Augusta Ada King (Lovelace), Fumiko Yonezawa, Grace Hopper
+
+-- ────────────────────────────────────────────────────────────
+-- Query 3: List all historical figures that contributed to more than 1 field
+-- ────────────────────────────────────────────────────────────
+SELECT s.full_name, COUNT(sf.field_id) AS field_count
+FROM Scientist s
+JOIN Scientist_Field sf ON s.scientist_id = sf.scientist_id
+GROUP BY s.scientist_id, s.full_name
+HAVING COUNT(sf.field_id) > 1
+ORDER BY field_count DESC, s.full_name;
+-- Results: Hertha Ayrton (3), Sophia Brahe (3), and 13 others with 2 fields
+
+-- ────────────────────────────────────────────────────────────
+-- Query 4: Mary Jackson's death year is incorrectly listed.
+--          Update this date to 2005.
+-- ────────────────────────────────────────────────────────────
+UPDATE Scientist
+SET death_year = 2005
+WHERE full_name = 'Mary Jackson';
+-- Verify:
+SELECT full_name, birth_year, death_year FROM Scientist
+WHERE full_name = 'Mary Jackson';
+-- Result: Mary Jackson | 1921 | 2005
+
+-- ────────────────────────────────────────────────────────────
+-- Query 5: List all historical figures who died before they were 40
+-- ────────────────────────────────────────────────────────────
+SELECT full_name, birth_year, death_year,
+       (death_year - birth_year) AS age_at_death
+FROM Scientist
+WHERE death_year IS NOT NULL
+  AND (death_year - birth_year) < 40
+ORDER BY age_at_death;
+-- Results: Augusta Ada King (Lovelace, 37), Rosalind Franklin (38)
+
+-- ────────────────────────────────────────────────────────────
+-- Query 6: Which countries have the most historical figures listed?
+-- ────────────────────────────────────────────────────────────
+SELECT c.country_name, COUNT(s.scientist_id) AS figure_count
+FROM Country c
+JOIN Scientist s ON c.country_id = s.country_id
+GROUP BY c.country_id, c.country_name
+ORDER BY figure_count DESC;
+-- Results: Britain (5), USA (4), France (4), Germany (3), ...
+
+-- ────────────────────────────────────────────────────────────
+-- Query 7: Are any historical figures still alive? If so who?
+-- (NULL death_year indicates the figure is still alive)
+-- ────────────────────────────────────────────────────────────
+SELECT full_name, birth_year
+FROM Scientist
+WHERE death_year IS NULL
+ORDER BY birth_year;
+-- Result: Yvonne Choquet-Bruhat (born 1923)
+
+-- ────────────────────────────────────────────────────────────
+-- Query 8: Which historical figures worked for NASA?
+-- ────────────────────────────────────────────────────────────
+SELECT s.full_name, s.birth_year, s.death_year
+FROM Scientist s
+JOIN Scientist_Organisation so ON s.scientist_id = so.scientist_id
+JOIN Organisation o ON so.org_id = o.org_id
+WHERE o.org_name = 'NASA'
+ORDER BY s.full_name;
+-- Results: Katherine Johnson, Mary Jackson
+
+-- ────────────────────────────────────────────────────────────
+-- Query 9: Which historical figures worked with Einstein?
+-- Three figures are documented to have worked directly with Einstein:
+-- - Mileva Marić  : studied alongside Einstein at Zurich Polytechnic;
+--                   debated collaborator on his 1905 papers
+-- - Emmy Noether  : her theorem directly resolved a flaw in Einstein's
+--                   General Relativity equations
+-- - Yvonne Choquet-Bruhat: worked with Einstein on the vacuum field
+--                   equations, beginning the field of GR dynamics
+-- ────────────────────────────────────────────────────────────
+SELECT s.full_name, s.birth_year, s.death_year,
+       c.country_name AS country_of_birth
+FROM Scientist s
+JOIN Country c ON s.country_id = c.country_id
+WHERE s.full_name IN ('Mileva Marić', 'Yvonne Choquet-Bruhat', 'Emmy Noether')
+ORDER BY s.birth_year;
+-- Results: Emmy Noether (1882), Mileva Marić (1875), Yvonne Choquet-Bruhat (1923)
+
+-- ────────────────────────────────────────────────────────────
+-- Query 10: Which countries have the most fields of research contributions?
+-- ────────────────────────────────────────────────────────────
+SELECT c.country_name,
+       COUNT(DISTINCT sf.field_id) AS distinct_fields
+FROM Country c
+JOIN Scientist s ON c.country_id = s.country_id
+JOIN Scientist_Field sf ON s.scientist_id = sf.scientist_id
+GROUP BY c.country_id, c.country_name
+ORDER BY distinct_fields DESC, c.country_name;
+-- Results: Britain (6), France/Germany/Sweden/USA (3 each), ...
+
+-- ────────────────────────────────────────────────────────────
+-- Query 11: Add an event for at least 1 scientist fulfilling requirements
+-- (Events already inserted in Section 10 above — verified here)
+-- ────────────────────────────────────────────────────────────
+SELECT e.event_title, e.event_date,
+       s.full_name        AS scientist_topic,
+       sp.first_name      AS speaker,
+       r.room_name,
+       r.room_type,
+       CASE e.requires_ticket WHEN TRUE THEN 'Yes' ELSE 'No' END AS ticketed
+FROM Event e
+JOIN Event_HistoricalFigure ehf ON e.event_id = ehf.event_id
+JOIN Scientist s   ON ehf.scientist_id = s.scientist_id
+JOIN Event_Speaker es ON e.event_id    = es.event_id
+JOIN Speaker sp    ON es.speaker_id    = sp.speaker_id
+JOIN Event_Room er ON e.event_id       = er.event_id
+JOIN Room r        ON er.room_id       = r.room_id
+ORDER BY e.event_date, s.full_name;
+
+-- ────────────────────────────────────────────────────────────
+-- Query 12: Amend (one of) the event(s) by changing the date
+-- ────────────────────────────────────────────────────────────
+UPDATE Event
+SET event_date = '2026-05-22'
+WHERE event_title LIKE 'Pioneers of Computing%';
+
+-- Verify:
+SELECT event_id, event_title, event_date FROM Event
+WHERE event_title LIKE 'Pioneers of Computing%';
+-- Result: date changed from 2026-05-15 to 2026-05-22
+
+-- ────────────────────────────────────────────────────────────
+-- Query 13: Add a new scientist to the database
+-- Cecilia Payne-Gaposchkin (1900-1979) — Britain
+-- Discovered that stars are primarily composed of hydrogen and helium
+-- (1925 doctoral thesis at Harvard). First woman to become a full
+-- professor at Harvard University.
+-- ────────────────────────────────────────────────────────────
+INSERT INTO Scientist (full_name, birth_year, death_year, country_id, biography)
+VALUES (
+    'Cecilia Payne-Gaposchkin', 1900, 1979,
+    (SELECT country_id FROM Country WHERE country_name = 'Britain'),
+    'Proposed in her 1925 doctoral thesis that stars are composed primarily of hydrogen and helium. Her conclusion was initially dismissed but later confirmed as one of the most important discoveries in stellar astrophysics. First woman to become a full professor at Harvard University.'
+);
+
+INSERT INTO Scientist_Field (scientist_id, field_id)
+SELECT s.scientist_id, f.field_id
+FROM Scientist s JOIN Field f
+WHERE s.full_name = 'Cecilia Payne-Gaposchkin'
+  AND f.field_name IN ('Astronomy', 'Physics');
+
+INSERT INTO Scientist_Organisation (scientist_id, org_id)
+SELECT s.scientist_id, o.org_id
+FROM Scientist s JOIN Organisation o
+WHERE s.full_name = 'Cecilia Payne-Gaposchkin'
+  AND o.org_name  = 'Harvard University';
+
+-- Verify new scientist:
+SELECT s.full_name, s.birth_year, s.death_year,
+       c.country_name,
+       GROUP_CONCAT(f.field_name ORDER BY f.field_name SEPARATOR ', ') AS fields
+FROM Scientist s
+JOIN Country c        ON s.country_id   = c.country_id
+JOIN Scientist_Field sf ON s.scientist_id = sf.scientist_id
+JOIN Field f          ON sf.field_id    = f.field_id
+WHERE s.full_name = 'Cecilia Payne-Gaposchkin'
+GROUP BY s.scientist_id, s.full_name, s.birth_year, s.death_year, c.country_name;
+-- Result: Cecilia Payne-Gaposchkin | 1900 | 1979 | Britain | Astronomy, Physics
